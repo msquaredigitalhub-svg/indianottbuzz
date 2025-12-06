@@ -33,9 +33,14 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const bot = new Telegraf(BOT_TOKEN);
 
 // RSS Parser Setup
+// server.js (Change this block)
 const parser = new RssParser({
     customFields: {
         item: ['title', 'link', 'pubDate', 'content:encoded'],
+    },
+    // ADD Headers here:
+    customHeaders: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     },
 });
 
