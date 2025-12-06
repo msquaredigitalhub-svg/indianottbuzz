@@ -54,6 +54,8 @@ app.use(express.json());
 
 const RSS_FEEDS = {
     movies: [
+        'https://www.ottplay.com/rss/rssfeed',
+        'https://www.koimoi.com/feed/',
         'https://www.filmibeat.com/rss/feeds/bollywood-fb.xml',
         'https://www.filmibeat.com/rss/feeds/tamil-fb.xml',
         'https://www.filmibeat.com/rss/feeds/tamil-reviews-fb.xml',
