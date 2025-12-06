@@ -1,384 +1,248 @@
-require('dotenv').config();
-process.env.TZ = 'Asia/Kolkata';
+/************************************************************
+ OTT PULSE INDIA – Weekly OTT Digest Bot
+ Author: ChatGPT (for MsquareDigitalHub)
+*************************************************************/
 
-const { Telegraf } = require('telegraf');
-const cron = require('node-cron');
-const Parser = require('rss-parser');
-const { JSONFilePreset } = require('lowdb/node');
-const express = require('express');
+process.env.TZ = "Asia/Kolkata";
 
+// Imports
+const { Telegraf } = require("telegraf");
+const cron = require("node-cron");
+const Parser = require("rss-parser");
+const express = require("express");
+const fetch = require("node-fetch");
+const cheerio = require("cheerio");
+const OpenAI = require("openai");
+
+// Environment Vars (Render automatically injects these)
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+
+// Initialize
+const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 app.use(express.json());
+const parser = new Parser();
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const parser = new Parser({
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/rss+xml, application/xml, text/xml',
-    'Accept-Language': 'en-US,en;q=0.9'
-  },
-  timeout: 15000,
-  maxRedirects: 5
+// ---------------------- WELCOME MESSAGE -----------------------
+
+const WELCOME_MESSAGE = `
+🎉 *Welcome to OTT Pulse India!*
+
+Your weekly destination for curated OTT updates across  
+Tamil, Telugu, Malayalam, Kannada, Hindi, English & Korean.
+
+✨ What You Get:
+• Weekly AI-curated OTT Digest  
+• Top 12 Picks of the Week  
+• AI Summary of OTT Trends  
+• Title of The Week (with critic review)  
+• Top 5 Cinema Headlines  
+
+Stay updated. Stay entertained.  
+*Powered by MsquareDigitalhub.com*
+`;
+
+// Send welcome message when new user joins
+bot.on("new_chat_members", async (ctx) => {
+  try {
+    await ctx.reply(WELCOME_MESSAGE, { parse_mode: "Markdown" });
+  } catch (e) {}
 });
 
-let db;
-let weeklyMovies = {};
+// ---------------------- BLOCK USER MESSAGES -----------------------
 
-(async () => {
+bot.on("message", async (ctx) => {
+  const from = ctx.message.from;
+
+  // Allow only admin to send commands
+  if (ctx.message.text?.startsWith("/broadcast") && from.id == 206392794) {
+    const text = ctx.message.text.replace("/broadcast", "").trim();
+    if (text.length > 0) {
+      await bot.telegram.sendMessage(GROUP_CHAT_ID, `📢 *Admin Broadcast*\n${text}`, {
+        parse_mode: "Markdown",
+      });
+    }
+    return;
+  }
+
+  // Block all other user messages
+  if (!from.is_bot) {
+    try {
+      await bot.telegram.deleteMessage(ctx.chat.id, ctx.message.message_id);
+    } catch (e) {}
+  }
+});
+
+// ---------------------- RSS Sources -----------------------
+
+const FEEDS = [
+  { url: "https://www.filmibeat.com/rss/feeds/bollywood-fb.xml", lang: "Hindi" },
+  { url: "https://www.filmibeat.com/rss/feeds/tamil-fb.xml", lang: "Tamil" },
+  { url: "https://www.filmibeat.com/rss/feeds/telugu-fb.xml", lang: "Telugu" },
+  { url: "https://www.filmibeat.com/rss/feeds/kannada-fb.xml", lang: "Kannada" },
+  { url: "https://www.filmibeat.com/rss/feeds/malayalam-fb.xml", lang: "Malayalam" },
+  { url: "https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml", lang: "English" },
+  { url: "https://www.filmibeat.com/rss/feeds/korean-fb.xml", lang: "Korean" },
+  { url: "https://www.filmibeat.com/rss/feeds/ott-fb.xml", lang: "Mixed" },
+  { url: "https://www.filmibeat.com/rss/feeds/english-latest-web-series-fb.xml", lang: "English" },
+];
+
+// ---------------------- Helper Fetch Functions -----------------------
+
+async function fetchArticle(url) {
   try {
-    db = await JSONFilePreset('db.json', { users: {}, adminId: 0 });
-    console.log('✓ DB initialized');
-    setupHandlers();
-    setupCron();
-    startServer();
-  } catch (error) {
-    console.error('✗ Initialization Error:', error.message);
-    process.exit(1);
+    const res = await fetch(url, { headers: { "User-Agent": "Mozilla" } });
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const txt = $("article").text().replace(/\s+/g, " ").trim();
+    return txt.slice(0, 4000);
+  } catch {
+    return "";
   }
-})();
+}
 
-function setupHandlers() {
-  app.post('/bot', (req, res) => {
-    bot.handleUpdate(req.body);
-    res.sendStatus(200);
-  });
+async function aiExtractMovieInfo(summary, title, link) {
+  const prompt = `
+Extract movie/web-series details from this text.
 
-  bot.on('my_chat_member', async (ctx) => {
-    try {
-      if (ctx.update.my_chat_member.new_chat_member.status === 'member') {
-        const userId = ctx.from.id;
-        await ctx.reply('Choose language:', {
-          reply_markup: {
-            inline_keyboard: [
-              [{text: 'English', callback_data: 'lang_en'}],
-              [{text: 'Hindi', callback_data: 'lang_hi'}],
-              [{text: 'Tamil', callback_data: 'lang_ta'}],
-            ]
-          }
-        });
-        db.data.users[userId] = { lang: 'en', joined: new Date().toISOString() };
-        await db.write();
-      }
-    } catch (e) {
-      console.error('✗ my_chat_member error:', e.message);
-    }
-  });
+Return JSON ONLY:
+{
+"title": "",
+"cast": [],
+"director": "",
+"genre": [],
+"synopsis": "",
+"ott": "",
+"score": 0-10
+}
 
-  bot.action(/^lang_(.+)$/, async (ctx) => {
-    try {
-      const lang = ctx.match[1];
-      const userId = ctx.from.id;
-      if (!db.data.users[userId]) {
-        db.data.users[userId] = { lang: 'en' };
-      }
-      db.data.users[userId].lang = lang;
-      await db.write();
-      await ctx.answerCbQuery('Language set');
-      await ctx.reply('✓ Updates every 2 minutes');
-    } catch (e) {
-      console.error('✗ lang_action error:', e.message);
-    }
-  });
+TEXT:
+${summary}
+`;
 
-  bot.command('setadmin', async (ctx) => {
-    try {
-      db.data.adminId = ctx.from.id;
-      await db.write();
-      await ctx.reply('✓ Admin set');
-    } catch (e) {
-      console.error('✗ setadmin error:', e.message);
-    }
-  });
-
-  bot.command('weeklylist', async (ctx) => {
-    try {
-      await ctx.reply('⏳ Generating list...');
-      await collectMoviesForWeek();
-      await broadcastWeeklyMovies();
-    } catch (e) {
-      await ctx.reply('✗ Error: ' + e.message);
-    }
-  });
-
-  app.get('/', (req, res) => {
-    res.json({ status: 'alive', timestamp: new Date().toISOString() });
-  });
-
-  app.get('/status', (req, res) => {
-    res.json({
-      status: 'running',
-      users: Object.keys(db.data.users).length,
-      movies: Object.keys(weeklyMovies).length,
-      timestamp: new Date().toISOString()
+  try {
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.1,
+      messages: [{ role: "user", content: prompt }],
     });
+
+    const json = JSON.parse(resp.choices[0].message.content);
+    json.link = link;
+    json.title = json.title || title;
+    return json;
+  } catch {
+    return { title, cast: [], director: "", genre: [], synopsis: "", score: 0, link };
+  }
+}
+
+// ---------------------- Core Movie Collector -----------------------
+
+async function collectMovies() {
+  let movies = [];
+
+  for (const feed of FEEDS) {
+    try {
+      const rss = await parser.parseURL(feed.url);
+      for (const item of rss.items.slice(0, 5)) {
+        const articleText = await fetchArticle(item.link || "");
+        const details = await aiExtractMovieInfo(articleText, item.title, item.link);
+        details.lang = feed.lang;
+        movies.push(details);
+      }
+    } catch (e) {}
+  }
+
+  // remove duplicates
+  const unique = {};
+  movies.forEach((m) => (unique[m.title] = m));
+  return Object.values(unique);
+}
+
+// ---------------------- AI Ranking & Digest Builder -----------------------
+
+async function buildDigest() {
+  const movies = await collectMovies();
+
+  const regions = movies.filter((m) => ["Hindi", "Tamil", "Telugu", "Kannada", "Malayalam"].includes(m.lang));
+  const english = movies.filter((m) => m.lang === "English");
+  const korean = movies.filter((m) => m.lang === "Korean");
+
+  const topRegional = regions.sort((a, b) => b.score - a.score).slice(0, 6);
+  const topEnglish = english.sort((a, b) => b.score - a.score).slice(0, 4);
+  const topKorean = korean.sort((a, b) => b.score - a.score).slice(0, 2);
+
+  const titleOfWeek = [...topRegional, ...topEnglish, ...topKorean].sort((a, b) => b.score - a.score)[0];
+
+  // AI Summary
+  const summaryPrompt = `
+Create a short OTT summary for India including trends, language performance, OTT activity, and patterns.
+Keep under 80 words.
+Movies: ${JSON.stringify(topRegional.concat(topEnglish, topKorean))}
+`;
+  const summaryResp = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: summaryPrompt }],
   });
+  const summary = summaryResp.choices[0].message.content;
 
-  console.log('✓ Handlers setup complete');
-}
+  // Critic Review
+  const criticPrompt = `
+Write a 50-word international critic review for this title:
+${JSON.stringify(titleOfWeek)}
+`;
+  const criticResp = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: criticPrompt }],
+  });
+  const critic = criticResp.choices[0].message.content;
 
-async function parseURLWithRetry(url, label, maxRetries = 3) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`  → Fetching ${label} (attempt ${attempt + 1}/${maxRetries + 1})...`);
-      const rss = await parser.parseURL(url);
-      
-      if (!rss) throw new Error('Empty response');
+  // Format Message
+  let msg = `🎬 *OTT WEEKLY DIGEST*\n\n`;
 
-      console.log(`  ✓ ${label}: Successfully parsed (${rss.items?.length || 0} items)`);
-      return rss;
-      
-    } catch (e) {
-      const errorCode = e.code || e.message || 'Unknown error';
-      
-      if (attempt < maxRetries) {
-        const waitTime = 500 * Math.pow(2, attempt);
-        console.log(`  ⚠ ${label}: Error on attempt ${attempt + 1} - ${errorCode}`);
-        console.log(`    Retrying in ${waitTime}ms...`);
-        await new Promise(r => setTimeout(r, waitTime));
-      } else {
-        console.log(`  ✗ ${label}: Failed after ${maxRetries + 1} attempts - ${errorCode}`);
-      }
-    }
-  }
-  
-  return null;
-}
+  msg += `🔥 *Regional Top Picks (6)*\n`;
+  topRegional.forEach((m, i) => (msg += `${i + 1}) *${m.title}* — ${m.genre.join(", ")}\n`));
 
-async function collectMoviesForWeek() {
-  const feeds = [
-    { url: 'https://www.bollywoodhungama.com/feed/', label: 'Bollywood Hungama', lang: 'Hindi' },
-    { url: 'https://www.filmibeat.com/rss/feeds/bollywood-fb.xml', label: 'FilmiBeat Bollywood', lang: 'Hindi' },
-    { url: 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms', label: 'TOI', lang: 'Hindi' },
-    { url: 'https://www.filmibeat.com/rss/feeds/tamil-fb.xml', label: 'FilmiBeat Tamil', lang: 'Tamil' },
-    { url: 'https://www.filmibeat.com/rss/feeds/telugu-fb.xml', label: 'FilmiBeat Telugu', lang: 'Telugu' },
-    { url: 'https://www.filmibeat.com/rss/feeds/kannada-fb.xml', label: 'FilmiBeat Kannada', lang: 'Kannada' },
-    { url: 'https://www.filmibeat.com/rss/feeds/malayalam-fb.xml', label: 'FilmiBeat Malayalam', lang: 'Malayalam' },
-    { url: 'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml', label: 'FilmiBeat Hollywood', lang: 'English' },
-    { url: 'https://collider.com/feed/', label: 'Collider', lang: 'English' }
-  ];
+  msg += `\n🌍 *English Picks (4)*\n`;
+  topEnglish.forEach((m, i) => (msg += `${i + 1}) *${m.title}*\n`));
 
-  console.log('\n' + '='.repeat(50));
-  console.log('🎬 COLLECTING MOVIES FOR WEEK');
-  console.log('='.repeat(50));
-  
-  let success = 0;
-  let failed = 0;
-  const startTime = Date.now();
+  msg += `\n🇰🇷 *Korean Picks (2)*\n`;
+  topKorean.forEach((m, i) => (msg += `${i + 1}) *${m.title}*\n`));
 
-  for (let feed of feeds) {
-    try {
-      const rss = await parseURLWithRetry(feed.url, feed.label, 3);
-      
-      if (rss && rss.items && rss.items.length > 0) {
-        for (let item of rss.items.slice(0, 5)) {
-          const title = (item.title || '').trim();
-          
-          if (title && !weeklyMovies[title]) {
-            weeklyMovies[title] = {
-              title: title,
-              link: item.link || '#',
-              lang: feed.lang,
-              platforms: getPlatforms(feed.lang),
-              pubDate: item.pubDate || new Date().toISOString()
-            };
-          }
-        }
-        success++;
-      } else {
-        console.log(`  ⚠ ${feed.label}: No items returned`);
-        failed++;
-      }
-      
-    } catch (e) {
-      console.log(`  ✗ ${feed.label}: Exception - ${e.message}`);
-      failed++;
-    }
-    
-    await new Promise(r => setTimeout(r, 1000));
-  }
+  msg += `\n⭐ *Title of the Week*\n*${titleOfWeek.title}*\n${critic}\n`;
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log('\n' + '='.repeat(50));
-  console.log(`✓ Collection Complete in ${duration}s`);
-  console.log(`  Feeds loaded: ${success}/${feeds.length}`);
-  console.log(`  Total movies: ${Object.keys(weeklyMovies).length}`);
-  console.log(`  Failed feeds: ${failed}`);
-  console.log('='.repeat(50) + '\n');
-}
-
-function getPlatforms(lang) {
-  const platforms = {
-    'Tamil': 'ZEE5, Sony LIV, Amazon Prime',
-    'Telugu': 'ZEE5, Aha, Amazon Prime',
-    'Kannada': 'ZEE5, Kannada Play',
-    'Malayalam': 'ManoramaMax, Amazon Prime',
-    'Hindi': 'Netflix, Prime Video, Disney+ Hotstar',
-    'English': 'Netflix, Prime Video'
-  };
-  return platforms[lang] || 'Check available platforms';
-}
-
-function formatMovies() {
-  let msg = '🎬 *MOVIE UPDATES*\n\n';
-  msg += `📅 ${new Date().toLocaleString('en-IN', { 
-    weekday: 'short', 
-    year: 'numeric', 
-    month: 'short', 
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  })}\n`;
-  msg += `📊 Total: ${Object.keys(weeklyMovies).length} movies\n\n`;
-  msg += '─'.repeat(40) + '\n\n';
-
-  const langs = ['Hindi', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'English'];
-  let hasContent = false;
-
-  for (let lang of langs) {
-    const movies = Object.values(weeklyMovies).filter(m => m.lang === lang);
-    if (movies.length === 0) continue;
-
-    hasContent = true;
-    msg += `🎥 *${lang}* (${movies.length})\n`;
-    msg += '─'.repeat(40) + '\n';
-    
-    for (let i = 0; i < Math.min(movies.length, 5); i++) {
-      const m = movies[i];
-      msg += `${i + 1}. ${m.title.substring(0, 50)}\n`;
-      msg += `   📱 ${m.platforms}\n\n`;
-    }
-  }
-
-  if (!hasContent) {
-    msg += '⚠️ No movies found in feeds\n';
-  }
+  msg += `\n🧠 *AI Summary:*\n${summary}\n`;
 
   return msg;
 }
 
-async function broadcastWeeklyMovies() {
+// ---------------------- Cron Job (Every 2 minutes for testing) -----------------------
+
+cron.schedule("*/2 * * * *", async () => {
   try {
-    console.log('\n' + '='.repeat(50));
-    console.log('📢 BROADCASTING UPDATES');
-    console.log(`⏰ ${new Date().toLocaleTimeString('en-IN')}`);
-    console.log('='.repeat(50));
-
-    if (Object.keys(weeklyMovies).length === 0) {
-      await collectMoviesForWeek();
-    }
-
-    let sent = 0;
-    let failed = 0;
-    const msg = formatMovies();
-
-    const userIds = Object.keys(db.data.users);
-    console.log(`📤 Sending to ${userIds.length} user(s)...`);
-
-    for (let userId of userIds) {
-      try {
-        await bot.telegram.sendMessage(userId, msg, { parse_mode: 'Markdown' });
-        sent++;
-      } catch (e) {
-        console.log(`  ✗ Failed to send to ${userId}: ${e.message}`);
-        failed++;
-      }
-      
-      await new Promise(r => setTimeout(r, 100));
-    }
-
-    console.log(`✓ Broadcast Complete`);
-    console.log(`  Sent: ${sent}/${userIds.length}`);
-    console.log(`  Failed: ${failed}`);
-    console.log('='.repeat(50) + '\n');
-    
+    const digest = await buildDigest();
+    await bot.telegram.sendMessage(GROUP_CHAT_ID, digest, { parse_mode: "Markdown" });
   } catch (e) {
-    console.error('✗ Broadcast error:', e.message);
+    console.log("Cron Error:", e.message);
   }
-}
-
-function setupCron() {
-  console.log('\n' + '='.repeat(50));
-  console.log('⏰ CRON CONFIGURATION');
-  console.log('='.repeat(50));
-  console.log('Mode: TESTING - Every 2 minutes');
-  console.log('Schedule: */2 * * * *');
-  console.log('Timezone: Asia/Kolkata (IST)');
-  console.log('='.repeat(50) + '\n');
-  
-  cron.schedule('*/2 * * * *', () => {
-    console.log('\n🔔 Cron triggered at ' + new Date().toLocaleTimeString('en-IN'));
-    broadcastWeeklyMovies();
-  });
-}
-
-function startServer() {
-  const PORT = process.env.PORT || 3000;
-  const WEBHOOK_URL = process.env.WEBHOOK_URL;
-
-  app.listen(PORT, async () => {
-    try {
-      console.log('\n' + '='.repeat(50));
-      console.log('🚀 SERVER STARTUP');
-      console.log('='.repeat(50));
-      console.log(`Port: ${PORT}`);
-      console.log(`Status: RUNNING`);
-      
-      if (WEBHOOK_URL) {
-        await bot.telegram.setWebhook(WEBHOOK_URL + '/bot');
-        console.log(`\n🌐 WEBHOOK CONFIGURATION`);
-        console.log(`Mode: WEBHOOK (no polling)`);
-        console.log(`Webhook URL: ${WEBHOOK_URL}/bot`);
-      } else {
-        console.log(`\n⚠️  WARNING: WEBHOOK_URL not configured`);
-        console.log(`Add to .env: WEBHOOK_URL=https://your-app.onrender.com`);
-      }
-      
-      console.log('\n📊 API Endpoints:');
-      console.log(`  GET  /        - Server status`);
-      console.log(`  GET  /status  - Detailed status`);
-      console.log(`  POST /bot     - Telegram webhook`);
-      
-      console.log('\n🤖 Telegram Commands:');
-      console.log(`  /setadmin    - Set admin user`);
-      console.log(`  /weeklylist  - Generate and broadcast`);
-      
-      console.log('='.repeat(50) + '\n');
-    } catch (e) {
-      console.error('✗ Webhook error:', e.message);
-    }
-  });
-}
-
-/* -----------------------------
-   🛑 GRACEFUL SHUTDOWN HANDLERS
-------------------------------*/
-
-process.on('SIGINT', async () => {
-  console.log('\n' + '='.repeat(50));
-  console.log('🛑 SHUTDOWN SIGNAL RECEIVED (SIGINT)');
-  console.log('Closing bot gracefully...');
-
-  try {
-    await bot.stop('SIGINT');
-    console.log('✓ Bot stopped');
-  } catch (e) {
-    console.error('✗ Error stopping bot:', e.message);
-  }
-
-  process.exit(0);
 });
 
-process.on('SIGTERM', async () => {
-  console.log('\n' + '='.repeat(50));
-  console.log('🛑 SHUTDOWN SIGNAL RECEIVED (SIGTERM)');
-  console.log('Closing bot gracefully...');
+// ---------------------- Webhook for Render Hosting -----------------------
 
-  try {
-    await bot.stop('SIGTERM');
-    console.log('✓ Bot stopped');
-  } catch (e) {
-    console.error('✗ Error stopping bot:', e.message);
+app.post("/bot", (req, res) => {
+  bot.handleUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.get("/", (req, res) => res.json({ status: "running" }));
+
+app.listen(3000, async () => {
+  if (WEBHOOK_URL) {
+    await bot.telegram.setWebhook(WEBHOOK_URL + "/bot");
   }
-
-  process.exit(0);
+  console.log("BOT RUNNING on Render...");
 });
