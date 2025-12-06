@@ -3,7 +3,7 @@ const express = require('express');
 const cron = require('node-cron');
 const RssParser = require('rss-parser');
 const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node'); // FIX: Use /node subpath for JSONFile adapter
+const { JSONFile } = require('lowdb/node'); 
 const { OpenAI } = require('openai');
 const cheerio = require('cheerio');
 const crypto = require('crypto');
@@ -23,7 +23,6 @@ const TIMEZONE = 'Asia/Kolkata';
 // LowDB Setup
 const file = path.join(__dirname, 'db.json');
 const adapter = new JSONFile(file);
-// FIX: Provide default data ({ processedLinks: [] }) to prevent "lowdb: missing default data" error
 const db = new Low(adapter, { processedLinks: [] }); 
 
 // OpenAI Setup
@@ -37,7 +36,7 @@ const parser = new RssParser({
     customFields: {
         item: ['title', 'link', 'pubDate', 'content:encoded'],
     },
-    // FIX: Use a stronger set of headers to bypass 403 blocks
+    // FIX: Strong headers to attempt to bypass 403 blocks on Oneindia feeds
     customHeaders: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -50,10 +49,7 @@ const parser = new RssParser({
 const app = express();
 app.use(express.json());
 
-// --- 🎬 Data Sources ---
-
-const RSS_FEEDS = {
- // --- 🎬 Data Sources (Oneindia Feeds) ---
+// --- 🎬 Data Sources (Oneindia Feeds) ---
 
 const RSS_FEEDS = {
     // Regional Movie Feeds
@@ -68,13 +64,10 @@ const RSS_FEEDS = {
         'https://hindi.oneindia.com/rss/feeds/hindi-entertainment-fb.xml', // Hindi/Bollywood
     ],
     // Empty the other categories as they are now covered or redundant
-    ott: [
-        // Keeping this empty for now
-    ],
-    headlines: [
-        // Keeping this empty for now
-    ],
+    ott: [],
+    headlines: [],
 };
+
 // --- 🛡 Crash-Proof Utilities ---
 
 /**
@@ -83,7 +76,6 @@ const RSS_FEEDS = {
 async function setupDb() {
     try {
         await db.read();
-        // Ensure data integrity before writing (though default is set in Low constructor)
         if (!db.data.processedLinks) {
              db.data.processedLinks = [];
         }
@@ -91,7 +83,6 @@ async function setupDb() {
         console.log('✓ Database initialized/loaded successfully.');
     } catch (error) {
         console.error('⚠ FATAL: Could not setup LowDB.', error);
-        // Do NOT crash the server
     }
 }
 
@@ -104,7 +95,6 @@ async function saveProcessedLink(link) {
         await db.read();
         if (!db.data.processedLinks.includes(link)) {
             db.data.processedLinks.push(link);
-            // Keep the array length manageable
             if (db.data.processedLinks.length > 500) {
                 db.data.processedLinks.splice(0, db.data.processedLinks.length - 500);
             }
@@ -126,7 +116,7 @@ async function isLinkProcessed(link) {
         return db.data.processedLinks.includes(link);
     } catch (error) {
         console.error('⚠ Error checking processed link from DB:', error);
-        return false; // Safest fallback: assume not processed to avoid missing a post
+        return false;
     }
 }
 
@@ -147,11 +137,9 @@ async function fetchAndCleanFeeds(urls) {
             for (const item of feed.items) {
                 const linkHash = crypto.createHash('sha256').update(item.link).digest('hex');
                 if (await isLinkProcessed(linkHash)) {
-                    // console.log(`➡ Skipping already processed link: ${item.title}`);
                     continue;
                 }
 
-                // Clean the content:encoded field (often contains HTML)
                 let cleanedContent = '';
                 if (item['content:encoded']) {
                     const $ = cheerio.load(item['content:encoded']);
@@ -170,7 +158,7 @@ async function fetchAndCleanFeeds(urls) {
             console.log(`✓ Successfully fetched and cleaned ${feed.items.length} items from ${url}.`);
         } catch (error) {
             console.error(`⚠ Error processing feed ${url}:`, error.message);
-            // Log error but continue to the next feed (crash-proof requirement)
+            // Log 403 error but continue
         }
     }
     return allItems;
@@ -186,7 +174,7 @@ async function processDataWithAI(titles, headlines) {
         title: 'Unknown Title',
         details: 'Details unavailable.',
         score: 0,
-        category: 'Regional' // Default category for array structuring
+        category: 'Regional'
     };
     const FALLBACK_OUTPUT = {
         rankedTitles: [
@@ -208,7 +196,6 @@ async function processDataWithAI(titles, headlines) {
         return FALLBACK_OUTPUT;
     }
 
-    // Filter out potential duplicates based on title before sending to AI
     const uniqueTitles = Array.from(new Set(titles.map(t => t.title)))
         .map(title => titles.find(t => t.title === title));
 
@@ -287,7 +274,6 @@ async function processDataWithAI(titles, headlines) {
         const aiResult = JSON.parse(rawJson);
         const rankedTitles = aiResult.titles_output || [];
         
-        // Find the title of the week from the list, or use a fallback
         const highestScoringTitle = rankedTitles.reduce((max, t) => {
             const score = parseFloat(t.score);
             return score > parseFloat(max.score || 0) ? t : max;
@@ -307,7 +293,6 @@ async function processDataWithAI(titles, headlines) {
 
     } catch (error) {
         console.error('⚠ AI API call failed or JSON parsing error:', error.message);
-        // Fallback required (crash-proof requirement)
         return FALLBACK_OUTPUT;
     }
 }
@@ -324,7 +309,6 @@ function assembleTelegramMessage(aiData) {
     let englishPicks = [];
     let koreanPicks = [];
 
-    // Filter and slice based on category and quotas
     if (Array.isArray(rankedTitles)) {
         regionalPicks = rankedTitles.filter(t => t.category && t.category.toLowerCase().includes('regional')).slice(0, 6);
         englishPicks = rankedTitles.filter(t => t.category && t.category.toLowerCase().includes('english')).slice(0, 4);
@@ -397,7 +381,11 @@ async function runDigestAndBroadcast() {
 
     try {
         // 1. Fetch Data
-        const allMovieItems = await fetchAndCleanFeeds([...RSS_FEEDS.movies, ...RSS_FEEDS.webSeries, ...RSS_FEEDS.ott]);
+        const allMovieItems = await fetchAndCleanFeeds([
+            ...RSS_FEEDS.movies, 
+            ...RSS_FEEDS.webSeries, 
+            ...RSS_FEEDS.ott
+        ]);
         const allHeadlineItems = await fetchAndCleanFeeds(RSS_FEEDS.headlines);
         
         // 2. Process with AI
@@ -408,7 +396,6 @@ async function runDigestAndBroadcast() {
 
         // 4. Save Processed Links
         const allItems = [...allMovieItems, ...allHeadlineItems];
-        // Only save links that were sent to the AI (or if fallback was used, save nothing new)
         if (!aiData.fallbackUsed) {
             for (const item of allItems) {
                 await saveProcessedLink(item.linkHash);
@@ -423,7 +410,6 @@ async function runDigestAndBroadcast() {
                 console.log('✓ Digest message successfully broadcast to group.');
             } catch (error) {
                 console.error(`⚠ Error sending message to group ${GROUP_CHAT_ID}:`, error.message);
-                // Log but do NOT crash server (crash-proof requirement)
             }
         } else {
             console.error('⚠ BOT_TOKEN is missing. Cannot broadcast.');
@@ -431,7 +417,6 @@ async function runDigestAndBroadcast() {
 
     } catch (error) {
         console.error('⚠ FATAL: Unhandled error during digest process:', error);
-        // Fallback: Attempt to send a crash message with minimum text
         try {
             if (BOT_TOKEN) {
                 await bot.telegram.sendMessage(GROUP_CHAT_ID, '🚨 **CRASH ALERT**: The scheduled digest failed due to a critical error. Check logs immediately.\nPowered by MsquareDigitalhub.com');
@@ -480,12 +465,10 @@ Powered by MsquareDigitalhub.com
 bot.on('message', async (ctx) => {
     try {
         if (ctx.chat.id.toString() === GROUP_CHAT_ID && ctx.message.from.is_bot === false) {
-            // A simpler, safer check for a read-only group is just to delete non-bot messages.
             await ctx.deleteMessage(ctx.message.message_id);
             console.log(`➡ Deleted message from user ${ctx.message.from.username || ctx.message.from.id}. Group is read-only.`);
         }
     } catch (error) {
-        // Often throws error if bot lacks delete permission, but server shouldn't crash
         if (!error.message.includes('message can\'t be deleted') && !error.message.includes('not enough rights')) {
              console.error('⚠ Error deleting user message:', error.message);
         }
@@ -496,7 +479,6 @@ bot.on('message', async (ctx) => {
 
 // Set the webhook for Render hosting
 async function setWebhook() {
-    // Only set webhook if URL is provided
     if (!WEBHOOK_URL) {
         console.error('⚠ FATAL: WEBHOOK_URL environment variable is missing. Cannot set webhook.');
         return;
@@ -508,7 +490,6 @@ async function setWebhook() {
         console.log('➡ Webhook Info:', webhookInfo);
     } catch (error) {
         console.error('⚠ FATAL: Could not set webhook:', error.message);
-        // Do NOT crash the server
     }
 }
 
@@ -516,10 +497,10 @@ async function setWebhook() {
 app.post(`/secret-path-for-telegraf`, (req, res) => {
     try {
         bot.handleUpdate(req.body);
-        res.sendStatus(200); // Always respond on webhook route with 200 (crash-proof requirement)
+        res.sendStatus(200); 
     } catch (error) {
         console.error('⚠ Error handling webhook update:', error.message);
-        res.sendStatus(200); // Still send 200 to Telegram
+        res.sendStatus(200); 
     }
 });
 
@@ -543,11 +524,9 @@ startServer();
 // --- Additional error handling to prevent unhandled rejections from crashing the process ---
 process.on('unhandledRejection', (reason, promise) => {
   console.error('⚠ Unhandled Rejection at:', promise, 'reason:', reason);
-  // Application specific logging
 });
 
 process.on('uncaughtException', (err) => {
   console.error('⚠ Uncaught Exception thrown:', err);
-  // Log first, then exit process (Render will automatically restart it)
   process.exit(1);
 });
