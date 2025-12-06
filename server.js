@@ -215,21 +215,54 @@ async function broadcastWeeklyMovies() {
 }
 
 function setupCron() {
-  console.log('Cron: Every 2 minutes');
+  console.log('');
+  console.log('=== CRON SETUP ===');
+  console.log('Mode: TESTING - Every 2 minutes');
+  console.log('Schedule: */2 * * * *');
+  console.log('==================');
+  console.log('');
+  
   cron.schedule('*/2 * * * *', broadcastWeeklyMovies);
+  
+  // For production, change to:
+  // cron.schedule('0 10 * * 0', broadcastWeeklyMovies);
 }
 
 function startServer() {
   const PORT = process.env.PORT || 3000;
-  bot.launch();
-  app.listen(PORT, () => {
-    console.log('Server on port ' + PORT);
-    console.log('Bot ready');
+  const WEBHOOK_URL = process.env.WEBHOOK_URL;
+
+  app.listen(PORT, async () => {
+    try {
+      if (WEBHOOK_URL) {
+        // Use webhook - no polling
+        await bot.telegram.setWebhook(WEBHOOK_URL + '/bot');
+        console.log('');
+        console.log('=== BOT CONFIGURATION ===');
+        console.log('Mode: WEBHOOK (no polling)');
+        console.log('Webhook URL: ' + WEBHOOK_URL + '/bot');
+        console.log('Server Port: ' + PORT);
+        console.log('========================');
+        console.log('');
+      } else {
+        console.log('');
+        console.log('WARNING: WEBHOOK_URL not set in .env');
+        console.log('Add to .env: WEBHOOK_URL=https://your-render-app.onrender.com');
+        console.log('');
+      }
+    } catch (e) {
+      console.error('Webhook error: ' + e.message);
+    }
   });
 }
 
 process.on('SIGINT', async () => {
-  console.log('Shutting down');
-  await bot.stop();
+  console.log('');
+  console.log('Shutting down gracefully...');
+  await db.write();
   process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason);
 });
