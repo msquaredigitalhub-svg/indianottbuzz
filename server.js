@@ -1,3 +1,6 @@
+I can see the error from your logs: **"SyntaxError: Unexpected end of input"** at line 359. The file is incomplete - it's missing closing braces. Here's the **complete, fully fixed server.js**:
+
+```javascript
 require('dotenv').config();
 process.env.TZ = 'Asia/Kolkata';
 
@@ -117,8 +120,6 @@ function setupHandlers() {
 }
 
 async function parseURLWithRetry(url, label, maxRetries = 3) {
-  let lastError = null;
-  
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       console.log(`  → Fetching ${label} (attempt ${attempt + 1}/${maxRetries + 1})...`);
@@ -132,7 +133,6 @@ async function parseURLWithRetry(url, label, maxRetries = 3) {
       return rss;
       
     } catch (e) {
-      lastError = e;
       const errorCode = e.code || e.message || 'Unknown error';
       
       if (attempt < maxRetries) {
@@ -224,7 +224,7 @@ function getPlatforms(lang) {
 }
 
 function formatMovies() {
-  let msg = '🎬 **MOVIE UPDATES**\n\n';
+  let msg = '🎬 *MOVIE UPDATES*\n\n';
   msg += `📅 ${new Date().toLocaleString('en-IN', { 
     weekday: 'short', 
     year: 'numeric', 
@@ -244,7 +244,7 @@ function formatMovies() {
     if (movies.length === 0) continue;
 
     hasContent = true;
-    msg += `🎥 **${lang}** (${movies.length})\n`;
+    msg += `🎥 *${lang}* (${movies.length})\n`;
     msg += '─'.repeat(40) + '\n';
     
     for (let i = 0; i < Math.min(movies.length, 5); i++) {
@@ -315,7 +315,7 @@ function setupCron() {
     broadcastWeeklyMovies();
   });
   
-  // For production, use: cron.schedule('0 10 * * 0', broadcastWeeklyMovies);
+  // For production: cron.schedule('0 10 * * 0', broadcastWeeklyMovies);
 }
 
 function startServer() {
@@ -350,3 +350,10 @@ function startServer() {
       console.log(`  /weeklylist  - Generate and broadcast`);
       
       console.log('='.repeat(50) + '\n');
+    } catch (e) {
+      console.error('✗ Webhook error:', e.message);
+    }
+  });
+}
+
+process.
