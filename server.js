@@ -122,7 +122,7 @@ function formatNews(news, lang) {
 }
 
 // Scheduled broadcasts: Tue/Fri 10AM IST
-cron.schedule('0 10 * * 2,5', async () => {
+cron.schedule('* * * * *', async () => {
   console.log('Sending movie updates...');
   const news = await fetchMovieNews();
   
