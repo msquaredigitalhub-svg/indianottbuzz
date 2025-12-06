@@ -2,7 +2,8 @@ const { Telegraf } = require('telegraf');
 const express = require('express');
 const cron = require('node-cron');
 const RssParser = require('rss-parser');
-const { Low, JSONFile } = require('lowdb');
+const { Low } = require('lowdb');
+const { JSONFile } = require('lowdb/node');
 const { OpenAI } = require('openai');
 const cheerio = require('cheerio');
 const crypto = require('crypto');
@@ -21,7 +22,7 @@ const TIMEZONE = 'Asia/Kolkata';
 
 // LowDB Setup
 const file = path.join(__dirname, 'db.json');
-const adapter = new JSONFile(file);
+const adapter = new JSONFile(file); // This will now work correctly
 const db = new Low(adapter);
 
 // OpenAI Setup
