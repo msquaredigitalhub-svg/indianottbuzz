@@ -53,34 +53,28 @@ app.use(express.json());
 // --- 🎬 Data Sources ---
 
 const RSS_FEEDS = {
+ // --- 🎬 Data Sources (Oneindia Feeds) ---
+
+const RSS_FEEDS = {
+    // Regional Movie Feeds
     movies: [
-        'https://www.ottplay.com/rss/rssfeed',
-        'https://www.koimoi.com/feed/',
-        'https://www.filmibeat.com/rss/feeds/bollywood-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/tamil-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/tamil-reviews-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/telugu-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/kannada-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/malayalam-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/korean-fb.xml',
+        'https://tamil.oneindia.com/rss/feeds/tamil-cinema-fb.xml',        // Tamil Cinema
+        'https://malayalam.oneindia.com/rss/feeds/malayalam-cinema-fb.xml',// Malayalam Cinema
+        'https://telugu.oneindia.com/rss/feeds/cinema-fb.xml',            // Telugu Cinema
+        'https://kannada.oneindia.com/rss/feeds/kannada-entertainment-fb.xml', // Kannada Entertainment
     ],
+    // General Entertainment and Headlines
     webSeries: [
-        'https://www.filmibeat.com/rss/feeds/english-latest-web-series-fb.xml',
+        'https://hindi.oneindia.com/rss/feeds/hindi-entertainment-fb.xml', // Hindi/Bollywood
     ],
+    // Empty the other categories as they are now covered or redundant
     ott: [
-        'https://www.filmibeat.com/rss/feeds/ott-fb.xml',
+        // Keeping this empty for now
     ],
     headlines: [
-        'https://www.filmibeat.com/rss/feeds/interviews-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/english-promotions-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/english-flashback-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/english-viral-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/television-fb.xml',
-        'https://www.filmibeat.com/rss/feeds/entertainment-music-fb.xml',
+        // Keeping this empty for now
     ],
 };
-
 // --- 🛡 Crash-Proof Utilities ---
 
 /**
