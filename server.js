@@ -93,7 +93,7 @@ function setupHandlers() {
       };
       
       await ctx.answerCbQuery(`Language set to ${langNames[lang]}!`);
-      await ctx.reply(`✅ Language set to ${langNames[lang]}!\n\n📅 Testing Mode: Every 2 minutes\n🎥 Regional + Bollywood Movies`);
+      await ctx.reply(`✅ Language set to ${langNames[lang]}!\n\n📅 Testing: Every 2 minutes\n🎥 Regional + Bollywood`);
       console.log(`✅ User ${userId}: ${lang}`);
     } catch (error) {
       console.error('❌ Language handler error:', error);
@@ -111,7 +111,7 @@ function setupHandlers() {
     }
   });
 
-  // Broadcast
+  // Broadcast command
   bot.command('broadcast', async (ctx) => {
     try {
       if (ctx.from.id !== db.data.adminId) {
@@ -168,38 +168,36 @@ function setupHandlers() {
 
 // ==================== VERIFIED WORKING RSS FEEDS ====================
 async function collectMoviesForWeek() {
-  // ✅ ALL URLS VERIFIED & WORKING (from FilmiBeat RSS page)
   const feeds = [
     // ========== BOLLYWOOD & HINDI ==========
     { url: 'https://www.bollywoodhungama.com/feed/', label: 'Bollywood Hungama', lang: 'Hindi' },
     { url: 'https://www.filmibeat.com/rss/feeds/bollywood-fb.xml', label: 'FilmiBeat Bollywood', lang: 'Hindi' },
     { url: 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms', label: 'TOI Entertainment', lang: 'Hindi' },
     
-    // ========== TAMIL (MULTIPLE VERIFIED SOURCES) ==========
+    // ========== TAMIL ==========
     { url: 'https://www.filmibeat.com/rss/feeds/tamil-fb.xml', label: 'FilmiBeat Tamil', lang: 'Tamil' },
     { url: 'https://www.filmibeat.com/rss/feeds/tamil-reviews-fb.xml', label: 'FilmiBeat Tamil Reviews', lang: 'Tamil' },
     
-    // ========== TELUGU (MULTIPLE VERIFIED SOURCES) ==========
+    // ========== TELUGU ==========
     { url: 'https://www.filmibeat.com/rss/feeds/telugu-fb.xml', label: 'FilmiBeat Telugu', lang: 'Telugu' },
     { url: 'https://chitrambhalare.in/feed', label: 'Chitram Bhalare', lang: 'Telugu' },
     
-    // ========== KANNADA (MULTIPLE VERIFIED SOURCES) ==========
+    // ========== KANNADA ==========
     { url: 'https://www.filmibeat.com/rss/feeds/kannada-fb.xml', label: 'FilmiBeat Kannada', lang: 'Kannada' },
     
-    // ========== MALAYALAM (MULTIPLE VERIFIED SOURCES) ==========
+    // ========== MALAYALAM ==========
     { url: 'https://www.filmibeat.com/rss/feeds/malayalam-fb.xml', label: 'FilmiBeat Malayalam', lang: 'Malayalam' },
     
-    // ========== ENGLISH/HOLLYWOOD ==========
+    // ========== ENGLISH ==========
     { url: 'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml', label: 'FilmiBeat Hollywood', lang: 'English' },
     { url: 'https://collider.com/feed/', label: 'Collider', lang: 'English' },
     
-    // ========== ADDITIONAL ENTERTAINMENT FEEDS ==========
+    // ========== ALL CONTENT ==========
     { url: 'https://www.filmibeat.com/rss/feeds/filmibeat-fb.xml', label: 'FilmiBeat All', lang: 'Mixed' },
   ];
   
-  console.log('\n📡 [COLLECTION] Collecting movies from verified feeds...\n');
+  console.log('\n📡 [COLLECTION] Collecting from RSS feeds...\n');
   let feedsSuccess = 0;
-  let totalMovies = 0;
   
   for (let feedSource of feeds) {
     try {
@@ -211,7 +209,6 @@ async function collectMoviesForWeek() {
         for (let item of rss.items.slice(0, 6)) {
           const title = (item.title || '').trim();
           
-          // Deduplication
           if (title && !weeklyMovies[title]) {
             const detectedLang = feedSource.lang === 'Mixed' ? detectLanguage(title) : feedSource.lang;
             
@@ -224,12 +221,11 @@ async function collectMoviesForWeek() {
               source: feedSource.label
             };
             addedCount++;
-            totalMovies++;
           }
         }
         
         if (addedCount > 0) {
-          console.log(`   ✅ ${feedSource.label} (${feedSource.lang}): +${addedCount}`);
+          console.log(`   ✅ ${feedSource.label}: +${addedCount}`);
           feedsSuccess++;
         }
       }
@@ -237,14 +233,10 @@ async function collectMoviesForWeek() {
       console.log(`   ⚠️ ${feedSource.label}: ${e.message}`);
     }
     
-    // Delay to avoid rate limiting
     await new Promise(resolve => setTimeout(resolve, 300));
   }
   
-  console.log(`\n📊 Collection Results:`);
-  console.log(`   ✅ ${feedsSuccess}/${feeds.length} feeds loaded`);
-  console.log(`   🎬 Total unique movies: ${Object.keys(weeklyMovies).length}\n`);
-  
+  console.log(`\n📊 Loaded: ${feedsSuccess}/${feeds.length} feeds | Total movies: ${Object.keys(weeklyMovies).length}\n`);
   return weeklyMovies;
 }
 
@@ -274,7 +266,6 @@ function getStreamingPlatforms(language) {
 
 // ==================== FORMAT WEEKLY MOVIE LIST ====================
 function formatWeeklyMovieList(userLang) {
-  // Group by language
   const moviesByLanguage = {};
   
   for (let title in weeklyMovies) {
@@ -285,12 +276,10 @@ function formatWeeklyMovieList(userLang) {
     moviesByLanguage[movie.language].push(movie);
   }
   
-  // Build message
   let message = `🎬 <b>Weekly Movie Updates</b>\n`;
   message += `📅 ${new Date().toLocaleDateString('en-IN')}\n`;
   message += `⏰ ${new Date().toLocaleTimeString('en-IN')}\n`;
-  message += `📊 Total: ${Object.keys(weeklyMovies).length} movies\n`;
-  message += `📡 Multi-Source Collection\n\n`;
+  message += `📊 Total: ${Object.keys(weeklyMovies).length} movies\n\n`;
   
   const langLabels = {
     'English': '🇺🇸 English / Hollywood',
@@ -301,7 +290,6 @@ function formatWeeklyMovieList(userLang) {
     'Telugu': '🇮🇳 తెలుగు / Telugu'
   };
   
-  // Add movies by language
   const sortedLanguages = ['Hindi', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'English'].filter(
     lang => moviesByLanguage[lang] && moviesByLanguage[lang].length > 0
   );
@@ -320,12 +308,22 @@ function formatWeeklyMovieList(userLang) {
     });
   }
   
-  message += `✅ Updated: ${new Date().toLocaleTimeString('en-IN')}`;
+  message += `\n✅ Updated: ${new Date().toLocaleTimeString('en-IN')}`;
   return message;
 }
 
 // ==================== CRON SCHEDULING ====================
 function setupCron() {
-  // ⏰ TESTING MODE: Every 2 minutes
   console.log('\n⏰ CRON SETUP (TESTING MODE):');
-  console.log('   📢 Broadcasts every 2 minutes');
+  console.log('   📢 Broadcasts every 2 minutes\n');
+  
+  // ✅ TESTING: Every 2 minutes
+  cron.schedule('*/2 * * * *', broadcastWeeklyMovies);
+  
+  // For production - change to:
+  // cron.schedule('0 10 * * 0', broadcastWeeklyMovies); // Sunday 10 AM
+}
+
+async function broadcastWeeklyMovies() {
+  try {
+    console.log(`\n📢 ${new Date().toISOString()} - Broadcasting movies...`);
