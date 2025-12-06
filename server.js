@@ -1,4 +1,3 @@
-```javascript
 require('dotenv').config();
 process.env.TZ = 'Asia/Kolkata';
 
@@ -22,21 +21,19 @@ const parser = new Parser({
 let db;
 let weeklyMovies = {};
 
-// INITIALIZATION
 (async () => {
   try {
     db = await JSONFilePreset('db.json', { users: {}, adminId: 0 });
-    console.log('✅ DB initialized');
+    console.log('DB initialized');
     setupHandlers();
     setupCron();
     startServer();
   } catch (error) {
-    console.error('❌ Error:', error);
+    console.error('Error:', error.message);
     process.exit(1);
   }
 })();
 
-// BOT HANDLERS
 function setupHandlers() {
   app.post('/bot', (req, res) => {
     bot.handleUpdate(req.body);
@@ -47,13 +44,12 @@ function setupHandlers() {
     try {
       if (ctx.update.my_chat_member.new_chat_member.status === 'member') {
         const userId = ctx.from.id;
-        await ctx.reply('🎬 Welcome! Choose language:', {
+        await ctx.reply('Choose language:', {
           reply_markup: {
             inline_keyboard: [
-              [{text: '🇺🇸 English', callback_data: 'lang_en'}],
-              [{text: '🇮🇳 हिंदी', callback_data: 'lang_hi'}],
-              [{text: '🇮🇳 தமிழ்', callback_data: 'lang_ta'}],
-              [{text: '🇮🇳 തെലുഗു', callback_data: 'lang_te'}],
+              [{text: 'English', callback_data: 'lang_en'}],
+              [{text: 'Hindi', callback_data: 'lang_hi'}],
+              [{text: 'Tamil', callback_data: 'lang_ta'}],
             ]
           }
         });
@@ -61,7 +57,7 @@ function setupHandlers() {
         await db.write();
       }
     } catch (e) {
-      console.error('Error:', e);
+      console.error(e);
     }
   });
 
@@ -69,28 +65,53 @@ function setupHandlers() {
     try {
       const lang = ctx.match[1];
       const userId = ctx.from.id;
+      if (!db.data.users[userId]) {
+        db.data.users[userId] = { lang: 'en' };
+      }
       db.data.users[userId].lang = lang;
       await db.write();
-      await ctx.answerCbQuery('✅ Language set!');
-      await ctx.reply('🎬 Updates every 2 minutes (testing)');
+      await ctx.answerCbQuery('Language set');
+      await ctx.reply('Updates every 2 minutes');
     } catch (e) {
-      console.error('Error:', e);
+      console.error(e);
     }
   });
 
   bot.command('setadmin', async (ctx) => {
-    db.data.adminId = ctx.from.id;
-    await db.write();
-    await ctx.reply(`✅ Admin: ${ctx.from.id}`);
+    try {
+      db.data.adminId = ctx.from.id;
+      await db.write();
+      await ctx.reply('Admin set');
+    } catch (e) {
+      console.error(e);
+    }
   });
 
-  app.get('/', (req, res) => res.json({ status: 'alive' }));
-  app.get('/status', (req, res) => res.json({ users: Object.keys(db.data.users).length, movies: Object.keys(weeklyMovies).length }));
+  bot.command('weeklylist', async (ctx) => {
+    try {
+      await ctx.reply('Generating list...');
+      await collectMoviesForWeek();
+      await broadcastWeeklyMovies();
+    } catch (e) {
+      await ctx.reply('Error: ' + e.message);
+    }
+  });
 
-  console.log('✅ Handlers setup');
+  app.get('/', (req, res) => {
+    res.json({ status: 'alive' });
+  });
+
+  app.get('/status', (req, res) => {
+    res.json({
+      status: 'running',
+      users: Object.keys(db.data.users).length,
+      movies: Object.keys(weeklyMovies).length
+    });
+  });
+
+  console.log('Handlers setup');
 }
 
-// RSS FEEDS
 async function collectMoviesForWeek() {
   const feeds = [
     { url: 'https://www.bollywoodhungama.com/feed/', label: 'Bollywood Hungama', lang: 'Hindi' },
@@ -100,10 +121,11 @@ async function collectMoviesForWeek() {
     { url: 'https://www.filmibeat.com/rss/feeds/telugu-fb.xml', label: 'FilmiBeat Telugu', lang: 'Telugu' },
     { url: 'https://www.filmibeat.com/rss/feeds/kannada-fb.xml', label: 'FilmiBeat Kannada', lang: 'Kannada' },
     { url: 'https://www.filmibeat.com/rss/feeds/malayalam-fb.xml', label: 'FilmiBeat Malayalam', lang: 'Malayalam' },
-    { url: 'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml', label: 'FilmiBeat Hollywood', lang: 'English' },
+    { url: 'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml', label: 'Hollywood', lang: 'English' },
+    { url: 'https://collider.com/feed/', label: 'Collider', lang: 'English' }
   ];
 
-  console.log('\n📡 Collecting movies...');
+  console.log('Collecting movies...');
   let success = 0;
 
   for (let feed of feeds) {
@@ -114,61 +136,62 @@ async function collectMoviesForWeek() {
           const title = (item.title || '').trim();
           if (title && !weeklyMovies[title]) {
             weeklyMovies[title] = {
-              title,
+              title: title,
               link: item.link || '#',
               lang: feed.lang,
               platforms: getPlatforms(feed.lang)
             };
           }
         }
-        console.log(`✅ ${feed.label}: OK`);
+        console.log('OK: ' + feed.label);
         success++;
       }
     } catch (e) {
-      console.log(`⚠️ ${feed.label}: ${e.message}`);
+      console.log('Error: ' + feed.label);
     }
     await new Promise(r => setTimeout(r, 300));
   }
 
-  console.log(`✅ Loaded: ${success}/${feeds.length} | Movies: ${Object.keys(weeklyMovies).length}\n`);
+  console.log('Loaded: ' + success + ' feeds, ' + Object.keys(weeklyMovies).length + ' movies');
 }
 
 function getPlatforms(lang) {
   const p = {
-    'Tamil': ['ZEE5', 'Sony LIV'],
-    'Telugu': ['ZEE5', 'Aha'],
-    'Kannada': ['ZEE5'],
-    'Malayalam': ['ManoramaMax'],
-    'Hindi': ['Netflix', 'Prime', 'Hotstar'],
-    'English': ['Netflix', 'Prime']
+    'Tamil': 'ZEE5, Sony LIV',
+    'Telugu': 'ZEE5, Aha',
+    'Kannada': 'ZEE5',
+    'Malayalam': 'ManoramaMax',
+    'Hindi': 'Netflix, Prime, Hotstar',
+    'English': 'Netflix, Prime'
   };
-  return (p[lang] || ['Check']).join(' • ');
+  return p[lang] || 'Check locally';
 }
 
 function formatMovies() {
-  let msg = `🎬 <b>Movie Updates</b>\n`;
-  msg += `⏰ ${new Date().toLocaleTimeString('en-IN')}\n`;
-  msg += `📊 Total: ${Object.keys(weeklyMovies).length} movies\n\n`;
+  let msg = 'Movie Updates\n\n';
+  msg += 'Time: ' + new Date().toLocaleTimeString('en-IN') + '\n';
+  msg += 'Total: ' + Object.keys(weeklyMovies).length + ' movies\n\n';
 
   const langs = ['Hindi', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'English'];
   for (let lang of langs) {
     const movies = Object.values(weeklyMovies).filter(m => m.lang === lang);
     if (movies.length === 0) continue;
-    
-    msg += `<b>${lang} (${movies.length})</b>\n`;
-    movies.slice(0, 5).forEach((m, i) => {
-      msg += `${i+1}. ${m.title.substring(0, 40)}\n   📺 ${m.platforms}\n`;
-    });
+
+    msg += lang + ' (' + movies.length + ')\n';
+    for (let i = 0; i < Math.min(movies.length, 5); i++) {
+      const m = movies[i];
+      msg += (i + 1) + '. ' + m.title.substring(0, 40) + '\n';
+      msg += '   ' + m.platforms + '\n';
+    }
     msg += '\n';
   }
   return msg;
 }
 
-// BROADCAST
 async function broadcastWeeklyMovies() {
   try {
-    console.log(`\n📢 ${new Date().toLocaleTimeString()} - Broadcasting...`);
-    
+    console.log('Broadcasting at ' + new Date().toLocaleTimeString());
+
     if (Object.keys(weeklyMovies).length === 0) {
       await collectMoviesForWeek();
     }
@@ -178,47 +201,35 @@ async function broadcastWeeklyMovies() {
 
     for (let userId in db.data.users) {
       try {
-        await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' });
+        await bot.telegram.sendMessage(userId, msg);
         sent++;
       } catch (e) {
-        console.warn(`⚠️ Failed: ${userId}`);
+        console.log('Failed: ' + userId);
       }
     }
 
-    console.log(`✅ Sent to ${sent} users\n`);
+    console.log('Sent to ' + sent + ' users');
   } catch (e) {
-    console.error('❌ Broadcast error:', e);
+    console.error('Broadcast error: ' + e.message);
   }
 }
 
-// CRON
 function setupCron() {
-  console.log('⏰ CRON: Every 2 minutes (testing)\n');
+  console.log('Cron: Every 2 minutes');
   cron.schedule('*/2 * * * *', broadcastWeeklyMovies);
-  // For production: cron.schedule('0 10 * * 0', broadcastWeeklyMovies);
 }
 
-// SERVER
 function startServer() {
   const PORT = process.env.PORT || 3000;
   bot.launch();
   app.listen(PORT, () => {
-    console.log(`✅ Server on port ${PORT}`);
-    console.log(`🤖 Movie Bot ready!`);
+    console.log('Server on port ' + PORT);
+    console.log('Bot ready');
   });
 }
 
 process.on('SIGINT', async () => {
-  console.log('\nShutting down...');
+  console.log('Shutting down');
   await bot.stop();
   process.exit(0);
 });
-```
-
-**Key changes:**
-- ✅ Complete & fully closed code (no missing braces)
-- ✅ Simplified structure
-- ✅ Tests every 2 minutes with `*/2 * * * *`
-- ✅ All functions properly closed
-- ✅ Ready to deploy
-
