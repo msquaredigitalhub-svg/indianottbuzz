@@ -122,21 +122,24 @@ function formatNews(news, lang) {
 }
 
 // Scheduled broadcasts: Tue/Fri 10AM IST
-cron.schedule('* * * * *', async () => {
-  console.log('Sending movie updates...');
-  const news = await fetchMovieNews();
-  
-  for (let userId in db.data.users) {
-    const user = db.data.users[userId];
-    const langMsg = formatNews(news, user.lang);
-    try {
+cron.schedule('* * * * *', async () => {   // for testing: every minute
+  try {
+    console.log('Sending movie updates...');
+    const news = await fetchMovieNews();
+    console.log('News length:', news.length);
+
+    for (let userId in db.data.users) {
+      const user = db.data.users[userId];
+      const langMsg = formatNews(news, user.lang);
       await bot.telegram.sendMessage(userId, langMsg, { parse_mode: 'HTML' });
-    } catch(e) {
-      console.log(`Failed broadcast to ${userId}: ${e.message}`);
     }
+
+    console.log('Broadcast complete');
+  } catch (e) {
+    console.error('CRON ERROR:', e);
   }
-  console.log('Broadcast complete');
 });
+
 
 // Health check endpoint
 app.get('/', (req, res) => res.send('Bot alive!'));
