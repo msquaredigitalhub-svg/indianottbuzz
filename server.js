@@ -548,4 +548,3 @@ process.on('uncaughtException', (err) => {
   // Log first, then exit process (Render will automatically restart it)
   process.exit(1);
 });
-```
