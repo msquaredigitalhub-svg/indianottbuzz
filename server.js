@@ -1,6 +1,3 @@
-I can see the error from your logs: **"SyntaxError: Unexpected end of input"** at line 359. The file is incomplete - it's missing closing braces. Here's the **complete, fully fixed server.js**:
-
-```javascript
 require('dotenv').config();
 process.env.TZ = 'Asia/Kolkata';
 
@@ -125,10 +122,8 @@ async function parseURLWithRetry(url, label, maxRetries = 3) {
       console.log(`  → Fetching ${label} (attempt ${attempt + 1}/${maxRetries + 1})...`);
       const rss = await parser.parseURL(url);
       
-      if (!rss) {
-        throw new Error('Empty response');
-      }
-      
+      if (!rss) throw new Error('Empty response');
+
       console.log(`  ✓ ${label}: Successfully parsed (${rss.items?.length || 0} items)`);
       return rss;
       
@@ -314,8 +309,6 @@ function setupCron() {
     console.log('\n🔔 Cron triggered at ' + new Date().toLocaleTimeString('en-IN'));
     broadcastWeeklyMovies();
   });
-  
-  // For production: cron.schedule('0 10 * * 0', broadcastWeeklyMovies);
 }
 
 function startServer() {
@@ -356,4 +349,36 @@ function startServer() {
   });
 }
 
-process.
+/* -----------------------------
+   🛑 GRACEFUL SHUTDOWN HANDLERS
+------------------------------*/
+
+process.on('SIGINT', async () => {
+  console.log('\n' + '='.repeat(50));
+  console.log('🛑 SHUTDOWN SIGNAL RECEIVED (SIGINT)');
+  console.log('Closing bot gracefully...');
+
+  try {
+    await bot.stop('SIGINT');
+    console.log('✓ Bot stopped');
+  } catch (e) {
+    console.error('✗ Error stopping bot:', e.message);
+  }
+
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n' + '='.repeat(50));
+  console.log('🛑 SHUTDOWN SIGNAL RECEIVED (SIGTERM)');
+  console.log('Closing bot gracefully...');
+
+  try {
+    await bot.stop('SIGTERM');
+    console.log('✓ Bot stopped');
+  } catch (e) {
+    console.error('✗ Error stopping bot:', e.message);
+  }
+
+  process.exit(0);
+});
