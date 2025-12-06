@@ -17,7 +17,7 @@ const parser = new Parser({
     'Accept': 'application/rss+xml, application/xml, text/xml',
     'Accept-Language': 'en-US,en;q=0.9'
   },
-  timeout: 15000,  // 15 seconds - increased from 10s
+  timeout: 15000,
   maxRedirects: 5
 });
 
@@ -116,7 +116,6 @@ function setupHandlers() {
   console.log('✓ Handlers setup complete');
 }
 
-// Enhanced error handling for RSS parsing with retry logic
 async function parseURLWithRetry(url, label, maxRetries = 3) {
   let lastError = null;
   
@@ -137,7 +136,7 @@ async function parseURLWithRetry(url, label, maxRetries = 3) {
       const errorCode = e.code || e.message || 'Unknown error';
       
       if (attempt < maxRetries) {
-        const waitTime = 500 * Math.pow(2, attempt);  // Exponential backoff: 500ms, 1s, 2s, 4s
+        const waitTime = 500 * Math.pow(2, attempt);
         console.log(`  ⚠ ${label}: Error on attempt ${attempt + 1} - ${errorCode}`);
         console.log(`    Retrying in ${waitTime}ms...`);
         await new Promise(r => setTimeout(r, waitTime));
@@ -152,18 +151,13 @@ async function parseURLWithRetry(url, label, maxRetries = 3) {
 
 async function collectMoviesForWeek() {
   const feeds = [
-    // Hindi feeds
     { url: 'https://www.bollywoodhungama.com/feed/', label: 'Bollywood Hungama', lang: 'Hindi' },
     { url: 'https://www.filmibeat.com/rss/feeds/bollywood-fb.xml', label: 'FilmiBeat Bollywood', lang: 'Hindi' },
     { url: 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms', label: 'TOI', lang: 'Hindi' },
-    
-    // Regional language feeds
     { url: 'https://www.filmibeat.com/rss/feeds/tamil-fb.xml', label: 'FilmiBeat Tamil', lang: 'Tamil' },
     { url: 'https://www.filmibeat.com/rss/feeds/telugu-fb.xml', label: 'FilmiBeat Telugu', lang: 'Telugu' },
     { url: 'https://www.filmibeat.com/rss/feeds/kannada-fb.xml', label: 'FilmiBeat Kannada', lang: 'Kannada' },
     { url: 'https://www.filmibeat.com/rss/feeds/malayalam-fb.xml', label: 'FilmiBeat Malayalam', lang: 'Malayalam' },
-    
-    // English feeds
     { url: 'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml', label: 'FilmiBeat Hollywood', lang: 'English' },
     { url: 'https://collider.com/feed/', label: 'Collider', lang: 'English' }
   ];
@@ -181,11 +175,9 @@ async function collectMoviesForWeek() {
       const rss = await parseURLWithRetry(feed.url, feed.label, 3);
       
       if (rss && rss.items && rss.items.length > 0) {
-        // Take up to 5 items from each feed
         for (let item of rss.items.slice(0, 5)) {
           const title = (item.title || '').trim();
           
-          // Avoid duplicates
           if (title && !weeklyMovies[title]) {
             weeklyMovies[title] = {
               title: title,
@@ -207,7 +199,6 @@ async function collectMoviesForWeek() {
       failed++;
     }
     
-    // Stagger requests to avoid rate limiting (1 second between requests)
     await new Promise(r => setTimeout(r, 1000));
   }
 
@@ -277,7 +268,6 @@ async function broadcastWeeklyMovies() {
     console.log(`⏰ ${new Date().toLocaleTimeString('en-IN')}`);
     console.log('='.repeat(50));
 
-    // Collect movies if not already done
     if (Object.keys(weeklyMovies).length === 0) {
       await collectMoviesForWeek();
     }
@@ -298,7 +288,6 @@ async function broadcastWeeklyMovies() {
         failed++;
       }
       
-      // Small delay between sending to avoid Telegram rate limits
       await new Promise(r => setTimeout(r, 100));
     }
 
@@ -321,14 +310,12 @@ function setupCron() {
   console.log('Timezone: Asia/Kolkata (IST)');
   console.log('='.repeat(50) + '\n');
   
-  // Testing: Every 2 minutes
   cron.schedule('*/2 * * * *', () => {
     console.log('\n🔔 Cron triggered at ' + new Date().toLocaleTimeString('en-IN'));
     broadcastWeeklyMovies();
   });
   
-  // For production, uncomment below and comment above:
-  // cron.schedule('0 10 * * 0', broadcastWeeklyMovies);  // Every Sunday at 10 AM
+  // For production, use: cron.schedule('0 10 * * 0', broadcastWeeklyMovies);
 }
 
 function startServer() {
@@ -354,5 +341,12 @@ function startServer() {
       }
       
       console.log('\n📊 API Endpoints:');
-      console.log(`  GET  / - Server status`);
-      console
+      console.log(`  GET  /        - Server status`);
+      console.log(`  GET  /status  - Detailed status`);
+      console.log(`  POST /bot     - Telegram webhook`);
+      
+      console.log('\n🤖 Telegram Commands:');
+      console.log(`  /setadmin    - Set admin user`);
+      console.log(`  /weeklylist  - Generate and broadcast`);
+      
+      console.log('='.repeat(50) + '\n');
