@@ -13,9 +13,12 @@ app.use(express.json());
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const parser = new Parser({
   headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/rss+xml, application/xml, text/xml',
+    'Accept-Language': 'en-US,en;q=0.9'
   },
-  timeout: 10000
+  timeout: 15000,  // 15 seconds - increased from 10s
+  maxRedirects: 5
 });
 
 let db;
@@ -24,12 +27,12 @@ let weeklyMovies = {};
 (async () => {
   try {
     db = await JSONFilePreset('db.json', { users: {}, adminId: 0 });
-    console.log('DB initialized');
+    console.log('✓ DB initialized');
     setupHandlers();
     setupCron();
     startServer();
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error('✗ Initialization Error:', error.message);
     process.exit(1);
   }
 })();
@@ -57,7 +60,7 @@ function setupHandlers() {
         await db.write();
       }
     } catch (e) {
-      console.error(e);
+      console.error('✗ my_chat_member error:', e.message);
     }
   });
 
@@ -71,9 +74,9 @@ function setupHandlers() {
       db.data.users[userId].lang = lang;
       await db.write();
       await ctx.answerCbQuery('Language set');
-      await ctx.reply('Updates every 2 minutes');
+      await ctx.reply('✓ Updates every 2 minutes');
     } catch (e) {
-      console.error(e);
+      console.error('✗ lang_action error:', e.message);
     }
   });
 
@@ -81,151 +84,251 @@ function setupHandlers() {
     try {
       db.data.adminId = ctx.from.id;
       await db.write();
-      await ctx.reply('Admin set');
+      await ctx.reply('✓ Admin set');
     } catch (e) {
-      console.error(e);
+      console.error('✗ setadmin error:', e.message);
     }
   });
 
   bot.command('weeklylist', async (ctx) => {
     try {
-      await ctx.reply('Generating list...');
+      await ctx.reply('⏳ Generating list...');
       await collectMoviesForWeek();
       await broadcastWeeklyMovies();
     } catch (e) {
-      await ctx.reply('Error: ' + e.message);
+      await ctx.reply('✗ Error: ' + e.message);
     }
   });
 
   app.get('/', (req, res) => {
-    res.json({ status: 'alive' });
+    res.json({ status: 'alive', timestamp: new Date().toISOString() });
   });
 
   app.get('/status', (req, res) => {
     res.json({
       status: 'running',
       users: Object.keys(db.data.users).length,
-      movies: Object.keys(weeklyMovies).length
+      movies: Object.keys(weeklyMovies).length,
+      timestamp: new Date().toISOString()
     });
   });
 
-  console.log('Handlers setup');
+  console.log('✓ Handlers setup complete');
+}
+
+// Enhanced error handling for RSS parsing with retry logic
+async function parseURLWithRetry(url, label, maxRetries = 3) {
+  let lastError = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`  → Fetching ${label} (attempt ${attempt + 1}/${maxRetries + 1})...`);
+      const rss = await parser.parseURL(url);
+      
+      if (!rss) {
+        throw new Error('Empty response');
+      }
+      
+      console.log(`  ✓ ${label}: Successfully parsed (${rss.items?.length || 0} items)`);
+      return rss;
+      
+    } catch (e) {
+      lastError = e;
+      const errorCode = e.code || e.message || 'Unknown error';
+      
+      if (attempt < maxRetries) {
+        const waitTime = 500 * Math.pow(2, attempt);  // Exponential backoff: 500ms, 1s, 2s, 4s
+        console.log(`  ⚠ ${label}: Error on attempt ${attempt + 1} - ${errorCode}`);
+        console.log(`    Retrying in ${waitTime}ms...`);
+        await new Promise(r => setTimeout(r, waitTime));
+      } else {
+        console.log(`  ✗ ${label}: Failed after ${maxRetries + 1} attempts - ${errorCode}`);
+      }
+    }
+  }
+  
+  return null;
 }
 
 async function collectMoviesForWeek() {
   const feeds = [
+    // Hindi feeds
     { url: 'https://www.bollywoodhungama.com/feed/', label: 'Bollywood Hungama', lang: 'Hindi' },
     { url: 'https://www.filmibeat.com/rss/feeds/bollywood-fb.xml', label: 'FilmiBeat Bollywood', lang: 'Hindi' },
     { url: 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms', label: 'TOI', lang: 'Hindi' },
+    
+    // Regional language feeds
     { url: 'https://www.filmibeat.com/rss/feeds/tamil-fb.xml', label: 'FilmiBeat Tamil', lang: 'Tamil' },
     { url: 'https://www.filmibeat.com/rss/feeds/telugu-fb.xml', label: 'FilmiBeat Telugu', lang: 'Telugu' },
     { url: 'https://www.filmibeat.com/rss/feeds/kannada-fb.xml', label: 'FilmiBeat Kannada', lang: 'Kannada' },
     { url: 'https://www.filmibeat.com/rss/feeds/malayalam-fb.xml', label: 'FilmiBeat Malayalam', lang: 'Malayalam' },
-    { url: 'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml', label: 'Hollywood', lang: 'English' },
+    
+    // English feeds
+    { url: 'https://www.filmibeat.com/rss/feeds/english-hollywood-fb.xml', label: 'FilmiBeat Hollywood', lang: 'English' },
     { url: 'https://collider.com/feed/', label: 'Collider', lang: 'English' }
   ];
 
-  console.log('Collecting movies...');
+  console.log('\n' + '='.repeat(50));
+  console.log('🎬 COLLECTING MOVIES FOR WEEK');
+  console.log('='.repeat(50));
+  
   let success = 0;
+  let failed = 0;
+  const startTime = Date.now();
 
   for (let feed of feeds) {
     try {
-      const rss = await parser.parseURL(feed.url);
-      if (rss.items && rss.items.length > 0) {
+      const rss = await parseURLWithRetry(feed.url, feed.label, 3);
+      
+      if (rss && rss.items && rss.items.length > 0) {
+        // Take up to 5 items from each feed
         for (let item of rss.items.slice(0, 5)) {
           const title = (item.title || '').trim();
+          
+          // Avoid duplicates
           if (title && !weeklyMovies[title]) {
             weeklyMovies[title] = {
               title: title,
               link: item.link || '#',
               lang: feed.lang,
-              platforms: getPlatforms(feed.lang)
+              platforms: getPlatforms(feed.lang),
+              pubDate: item.pubDate || new Date().toISOString()
             };
           }
         }
-        console.log('OK: ' + feed.label);
         success++;
+      } else {
+        console.log(`  ⚠ ${feed.label}: No items returned`);
+        failed++;
       }
+      
     } catch (e) {
-      console.log('Error: ' + feed.label);
+      console.log(`  ✗ ${feed.label}: Exception - ${e.message}`);
+      failed++;
     }
-    await new Promise(r => setTimeout(r, 300));
+    
+    // Stagger requests to avoid rate limiting (1 second between requests)
+    await new Promise(r => setTimeout(r, 1000));
   }
 
-  console.log('Loaded: ' + success + ' feeds, ' + Object.keys(weeklyMovies).length + ' movies');
+  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  console.log('\n' + '='.repeat(50));
+  console.log(`✓ Collection Complete in ${duration}s`);
+  console.log(`  Feeds loaded: ${success}/${feeds.length}`);
+  console.log(`  Total movies: ${Object.keys(weeklyMovies).length}`);
+  console.log(`  Failed feeds: ${failed}`);
+  console.log('='.repeat(50) + '\n');
 }
 
 function getPlatforms(lang) {
-  const p = {
-    'Tamil': 'ZEE5, Sony LIV',
-    'Telugu': 'ZEE5, Aha',
-    'Kannada': 'ZEE5',
-    'Malayalam': 'ManoramaMax',
-    'Hindi': 'Netflix, Prime, Hotstar',
-    'English': 'Netflix, Prime'
+  const platforms = {
+    'Tamil': 'ZEE5, Sony LIV, Amazon Prime',
+    'Telugu': 'ZEE5, Aha, Amazon Prime',
+    'Kannada': 'ZEE5, Kannada Play',
+    'Malayalam': 'ManoramaMax, Amazon Prime',
+    'Hindi': 'Netflix, Prime Video, Disney+ Hotstar',
+    'English': 'Netflix, Prime Video'
   };
-  return p[lang] || 'Check locally';
+  return platforms[lang] || 'Check available platforms';
 }
 
 function formatMovies() {
-  let msg = 'Movie Updates\n\n';
-  msg += 'Time: ' + new Date().toLocaleTimeString('en-IN') + '\n';
-  msg += 'Total: ' + Object.keys(weeklyMovies).length + ' movies\n\n';
+  let msg = '🎬 **MOVIE UPDATES**\n\n';
+  msg += `📅 ${new Date().toLocaleString('en-IN', { 
+    weekday: 'short', 
+    year: 'numeric', 
+    month: 'short', 
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}\n`;
+  msg += `📊 Total: ${Object.keys(weeklyMovies).length} movies\n\n`;
+  msg += '─'.repeat(40) + '\n\n';
 
   const langs = ['Hindi', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'English'];
+  let hasContent = false;
+
   for (let lang of langs) {
     const movies = Object.values(weeklyMovies).filter(m => m.lang === lang);
     if (movies.length === 0) continue;
 
-    msg += lang + ' (' + movies.length + ')\n';
+    hasContent = true;
+    msg += `🎥 **${lang}** (${movies.length})\n`;
+    msg += '─'.repeat(40) + '\n';
+    
     for (let i = 0; i < Math.min(movies.length, 5); i++) {
       const m = movies[i];
-      msg += (i + 1) + '. ' + m.title.substring(0, 40) + '\n';
-      msg += '   ' + m.platforms + '\n';
+      msg += `${i + 1}. ${m.title.substring(0, 50)}\n`;
+      msg += `   📱 ${m.platforms}\n\n`;
     }
-    msg += '\n';
   }
+
+  if (!hasContent) {
+    msg += '⚠️ No movies found in feeds\n';
+  }
+
   return msg;
 }
 
 async function broadcastWeeklyMovies() {
   try {
-    console.log('Broadcasting at ' + new Date().toLocaleTimeString());
+    console.log('\n' + '='.repeat(50));
+    console.log('📢 BROADCASTING UPDATES');
+    console.log(`⏰ ${new Date().toLocaleTimeString('en-IN')}`);
+    console.log('='.repeat(50));
 
+    // Collect movies if not already done
     if (Object.keys(weeklyMovies).length === 0) {
       await collectMoviesForWeek();
     }
 
     let sent = 0;
+    let failed = 0;
     const msg = formatMovies();
 
-    for (let userId in db.data.users) {
+    const userIds = Object.keys(db.data.users);
+    console.log(`📤 Sending to ${userIds.length} user(s)...`);
+
+    for (let userId of userIds) {
       try {
-        await bot.telegram.sendMessage(userId, msg);
+        await bot.telegram.sendMessage(userId, msg, { parse_mode: 'Markdown' });
         sent++;
       } catch (e) {
-        console.log('Failed: ' + userId);
+        console.log(`  ✗ Failed to send to ${userId}: ${e.message}`);
+        failed++;
       }
+      
+      // Small delay between sending to avoid Telegram rate limits
+      await new Promise(r => setTimeout(r, 100));
     }
 
-    console.log('Sent to ' + sent + ' users');
+    console.log(`✓ Broadcast Complete`);
+    console.log(`  Sent: ${sent}/${userIds.length}`);
+    console.log(`  Failed: ${failed}`);
+    console.log('='.repeat(50) + '\n');
+    
   } catch (e) {
-    console.error('Broadcast error: ' + e.message);
+    console.error('✗ Broadcast error:', e.message);
   }
 }
 
 function setupCron() {
-  console.log('');
-  console.log('=== CRON SETUP ===');
+  console.log('\n' + '='.repeat(50));
+  console.log('⏰ CRON CONFIGURATION');
+  console.log('='.repeat(50));
   console.log('Mode: TESTING - Every 2 minutes');
   console.log('Schedule: */2 * * * *');
-  console.log('==================');
-  console.log('');
+  console.log('Timezone: Asia/Kolkata (IST)');
+  console.log('='.repeat(50) + '\n');
   
-  cron.schedule('*/2 * * * *', broadcastWeeklyMovies);
+  // Testing: Every 2 minutes
+  cron.schedule('*/2 * * * *', () => {
+    console.log('\n🔔 Cron triggered at ' + new Date().toLocaleTimeString('en-IN'));
+    broadcastWeeklyMovies();
+  });
   
-  // For production, change to:
-  // cron.schedule('0 10 * * 0', broadcastWeeklyMovies);
+  // For production, uncomment below and comment above:
+  // cron.schedule('0 10 * * 0', broadcastWeeklyMovies);  // Every Sunday at 10 AM
 }
 
 function startServer() {
@@ -234,35 +337,22 @@ function startServer() {
 
   app.listen(PORT, async () => {
     try {
+      console.log('\n' + '='.repeat(50));
+      console.log('🚀 SERVER STARTUP');
+      console.log('='.repeat(50));
+      console.log(`Port: ${PORT}`);
+      console.log(`Status: RUNNING`);
+      
       if (WEBHOOK_URL) {
-        // Use webhook - no polling
         await bot.telegram.setWebhook(WEBHOOK_URL + '/bot');
-        console.log('');
-        console.log('=== BOT CONFIGURATION ===');
-        console.log('Mode: WEBHOOK (no polling)');
-        console.log('Webhook URL: ' + WEBHOOK_URL + '/bot');
-        console.log('Server Port: ' + PORT);
-        console.log('========================');
-        console.log('');
+        console.log(`\n🌐 WEBHOOK CONFIGURATION`);
+        console.log(`Mode: WEBHOOK (no polling)`);
+        console.log(`Webhook URL: ${WEBHOOK_URL}/bot`);
       } else {
-        console.log('');
-        console.log('WARNING: WEBHOOK_URL not set in .env');
-        console.log('Add to .env: WEBHOOK_URL=https://your-render-app.onrender.com');
-        console.log('');
+        console.log(`\n⚠️  WARNING: WEBHOOK_URL not configured`);
+        console.log(`Add to .env: WEBHOOK_URL=https://your-app.onrender.com`);
       }
-    } catch (e) {
-      console.error('Webhook error: ' + e.message);
-    }
-  });
-}
-
-process.on('SIGINT', async () => {
-  console.log('');
-  console.log('Shutting down gracefully...');
-  await db.write();
-  process.exit(0);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
-});
+      
+      console.log('\n📊 API Endpoints:');
+      console.log(`  GET  / - Server status`);
+      console
