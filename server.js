@@ -206,7 +206,7 @@ async function processDataWithAI(titles, headlines) {
         ### A. Title Ranking and Selection
         Process the following list of ${uniqueTitles.length} unique titles (movies and web-series).
         For each, estimate its **Indian Audience Relevance Score** (out of 10) based on cast, genre, and hype.
-        Extract the following details: **Title**, **Cast**, **Director**, **Genre**, **Synopsis** (max 2 sentences), **Language/Origin**.
+        Extract the following details: **Title**, **Cast**, **Director**, **Genre**, **Synopsis** (max 1 short sentence, 15 words), **Language/Origin**.
 
         Select titles based on the highest scores to fulfill these quotas:
         - **6 Regional Titles** (mix of Hindi/Bollywood/South) -> Must have "Regional" in the category field.
@@ -218,7 +218,7 @@ async function processDataWithAI(titles, headlines) {
         [
             {
                 "title": "Title Name",
-                "details": "Cast: [Names]. Director: [Name]. Genre: [Genre]. Synopsis: [Synopsis]. Language: [Language]",
+                "details": "Cast: [max 3 names]. Dir: [1 name]. Genre: [Genre]. Synopsis: [max 15 words]",
                 "score": 8.5,
                 "category": "Regional|English|Korean"
             },
@@ -431,7 +431,8 @@ async function runDigestAndBroadcast() {
 
 // --- ⏱ Cron Schedule ---
 
-// For testing: run digest every 2 minutes. Change to a less frequent schedule (e.g., weekly) in production.
+// Cron is set to run every 2 minutes for testing, as requested.
+// Remember to change this to a bi-weekly schedule (e.g., '0 10 1,15 * *') for production.
 cron.schedule('*/2 * * * *', () => {
     console.log(`\n\n--- ⏱ CRON Triggered at ${new Date().toISOString()} (${TIMEZONE}) ---`);
     runDigestAndBroadcast();
